@@ -1,0 +1,163 @@
+[1mdiff --git a/barcode_scanner.py b/barcode_scanner.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..585fa97[m
+[1m--- /dev/null[m
+[1m+++ b/barcode_scanner.py[m
+[36m@@ -0,0 +1,355 @@[m
+[32m+[m[32m"""[m
+[32m+[m[32mBarcode Scanner Utility for SSMS[m
+[32m+[m[32mSupports barcode scanning, QR code generation, and product lookup[m
+[32m+[m[32m"""[m
+[32m+[m
+[32m+[m[32mimport cv2[m
+[32m+[m[32mimport numpy as np[m
+[32m+[m[32mfrom pyzbar import pyzbar[m
+[32m+[m[32mfrom PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,[m[41m [m
+[32m+[m[32m                            QPushButton, QLineEdit, QTextEdit, QMessageBox,[m
+[32m+[m[32m                            QComboBox, QSpinBox, QFormLayout, QGroupBox)[m
+[32m+[m[32mfrom PyQt6.QtCore import QTimer, pyqtSignal, QThread[m
+[32m+[m[32mfrom PyQt6.QtGui import QPixmap, QImage[m
+[32m+[m[32mimport qrcode[m
+[32m+[m[32mfrom io import BytesIO[m
+[32m+[m[32mimport json[m
+[32m+[m[32mimport time[m
+[32m+[m
+[32m+[m
+[32m+[m[32mclass BarcodeScannerThread(QThread):[m
+[32m+[m[32m    """Thread for continuous barcode scanning"""[m
+[32m+[m[32m    barcode_detected = pyqtSignal(str, str)  # barcode_data, barcode_type[m
+[32m+[m[32m    error_occurred = pyqtSignal(str)[m
+[32m+[m[41m    [m
+[32m+[m[32m    def __init__(self, camera_index=0):[m
+[32m+[m[32m        super().__init__()[m
+[32m+[m[32m        self.camera_index = camera_index[m
+[32m+[m[32m        self.running = False[m
+[32m+[m[32m        self.cap = None[m
+[32m+[m[41m        [m
+[32m+[m[32m    def run(self):[m
+[32m+[m[32m        """Run barcode scanning loop"""[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            self.cap = cv2.VideoCapture(self.camera_index)[m
+[32m+[m[32m            if not self.cap.isOpened():[m
+[32m+[m[32m                self.error_occurred.emit("Could not open camera")[m
+[32m+[m[32m                return[m
+[32m+[m[41m                [m
+[32m+[m[32m            self.running = True[m
+[32m+[m[32m            while self.running:[m
+[32m+[m[32m                ret, frame = self.cap.read()[m
+[32m+[m[32m                if not ret:[m
+[32m+[m[32m                    continue[m
+[32m+[m[41m                    [m
+[32m+[m[32m                # Decode barcodes[m
+[32m+[m[32m                barcodes = pyzbar.decode(frame)[m
+[32m+[m[41m                [m
+[32m+[m[32m                for barcode in barcodes:[m
+[32m+[m[32m                    barcode_data = barcode.data.decode('utf-8')[m
+[32m+[m[32m                    barcode_type = barcode.type[m
+[32m+[m[32m                    self.barcode_detected.emit(barcode_data, barcode_type)[m
+[32m+[m[32m                    break  # Process one barcode at a time[m
+[32m+[m[41m                    [m
+[32m+[m[32m                time.sleep(0.1)  # Small delay to prevent excessive CPU usage[m
+[32m+[m[41m                [m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            self.error_occurred.emit(f"Scanner error: {str(e)}")[m
+[32m+[m[32m        finally:[m
+[32m+[m[32m            if self.cap:[m
+[32m+[m[32m                self.cap.release()[m
+[32m+[m[41m                [m
+[32m+[m[32m    def stop(self):[m
+[32m+[m[32m        """Stop scanning"""[m
+[32m+[m[32m        self.running = False[m
+[32m+[m[32m        self.wait()[m
+[32m+[m
+[32m+[m
+[32m+[m[32mclass BarcodeScannerDialog(QDialog):[m
+[32m+[m[32m    """Barcode scanner dialog"""[m
+[32m+[m[41m    [m
+[32m+[m[32m    def __init__(self, parent=None, callback=None):[m
+[32m+[m[32m        super().__init__(parent)[m
+[32m+[m[32m        self.callback = callback[m
+[32m+[m[32m        self.scanner_thread = None[m
+[32m+[m[32m        self.setup_ui()[m
+[32m+[m[41m        [m
+[32m+[m[32m    def setup_ui(self):[m
+[32m+[m[32m        """Setup scanner UI"""[m
+[32m+[m[32m        self.setWindowTitle("Barcode Scanner")[m
+[32m+[m[32m        self.setFixedSize(600, 500)[m
+[32m+[m[41m        [m
+[32m+[m[32m        layout = QVBoxLayout(self)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Camera selection[m
+[32m+[m[32m        camera_group = QGroupBox("Camera Settings")[m
+[32m+[m[32m        camera_layout = QFormLayout(camera_group)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.camera_combo = QComboBox()[m
+[32m+[m[32m        self.camera_combo.addItems(["Camera 0", "Camera 1", "Camera 2"])[m
+[32m+[m[32m        camera_layout.addRow("Camera:", self.camera_combo)[m
+[32m+[m[41m        [m
+[32m+[m[32m        layout.addWidget(camera_group)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Scanner controls[m
+[32m+[m[32m        controls_layout = QHBoxLayout()[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.start_btn = QPushButton("Start Scanning")[m
+[32m+[m[32m        self.start_btn.clicked.connect(self.start_scanning)[m
+[32m+[m[32m        controls_layout.addWidget(self.start_btn)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.stop_btn = QPushButton("Stop Scanning")[m
+[32m+[m[32m        self.stop_btn.clicked.connect(self.stop_scanning)[m
+[32m+[m[32m        self.stop_btn.setEnabled(False)[m
+[32m+[m[32m        controls_layout.addWidget(self.stop_btn)[m
+[32m+[m[41m        [m
+[32m+[m[32m        layout.addLayout(controls_layout)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Manual input[m
+[32m+[m[32m        manual_group = QGroupBox("Manual Input")[m
+[32m+[m[32m        manual_layout = QFormLayout(manual_group)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.manual_input = QLineEdit()[m
+[32m+[m[32m        self.manual_input.setPlaceholderText("Enter barcode manually...")[m
+[32m+[m[32m        self.manual_input.returnPressed.connect(self.process_manual_input)[m
+[32m+[m[32m        manual_layout.addRow("Barcode:", self.manual_input)[m
+[32m+[m[41m        [m
+[32m+[m[32m        layout.addWidget(manual_group)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Results[m
+[32m+[m[32m        results_group = QGroupBox("Scan Results")[m
+[32m+[m[32m        results_layout = QVBoxLayout(results_group)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.results_text = QTextEdit()[m
+[32m+[m[32m        self.results_text.setReadOnly(True)[m
+[32m+[m[32m        self.results_text.setMaximumHeight(150)[m
+[32m+[m[32m        results_layout.addWidget(self.results_text)[m
+[32m+[m[41m        [m
+[32m+[m[32m        layout.addWidget(results_group)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Action buttons[m
+[32m+[m[32m        action_layout = QHBoxLayout()[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.use_btn = QPushButton("Use This Barcode")[m
+[32m+[m[32m        self.use_btn.clicked.connect(self.use_barcode)[m
+[32m+[m[32m        self.use_btn.setEnabled(False)[m
+[32m+[m[32m        action_layout.addWidget(self.use_btn)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.clear_btn = QPushButton("Clear")[m
+[32m+[m[32m        self.clear_btn.clicked.connect(self.clear_results)[m
+[32m+[m[32m        action_layout.addWidget(self.clear_btn)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.close_btn = QPushButton("Close")[m
+[32m+[m[32m        self.close_btn.clicked.connect(self.close)[m
+[32m+[m[32m        action_layout.addWidget(self.close_btn)[m
+[32m+[m[41m        [m
+[32m+[m[32m        layout.addLayout(action_layout)[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.current_barcode = None[m
+[32m+[m[41m        [m
+[32m+[m[32m    def start_scanning(self):[m
+[32m+[m[32m        """Start barcode scanning"""[m
+[32m+[m[32m        camera_index = self.camera_combo.currentIndex()[m
+[32m+[m[41m        [m
+[32m+[m[32m        self.scanner_thread = BarcodeScannerThread(camera_index)[m
+[32m+[m[32m        self.scanner_thread.barcode_detected.connect(self.on_barcode_detected)[m
+[32m+[m[32m        self.scanner_thread.error_occurred.connect(self.on_error)[m
+[32m+[m[32m        self.scanner_thread
