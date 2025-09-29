@@ -46,6 +46,11 @@ A modern, ultra-sleek Sales and Stock Management System built with Python and Py
    ```bash
    pip install -r requirements.txt
    ```
+   
+   **Note**: If you encounter a `cryptography` package error, install it separately:
+   ```bash
+   pip install cryptography>=3.4.8
+   ```
 
 3. **Database Setup**
    - Create a MySQL/MariaDB database
